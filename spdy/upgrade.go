@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/docker/spdystream"
-	"github.com/ncdc/httpstream/api"
+	"github.com/ncdc/httpstream"
 )
 
 const (
@@ -20,11 +20,11 @@ const (
 type spdy31RequestUpgrader struct {
 }
 
-func NewRequestUpgrader() api.RequestUpgrader {
+func NewRequestUpgrader() httpstream.RequestUpgrader {
 	return spdy31RequestUpgrader{}
 }
 
-func (u spdy31RequestUpgrader) Upgrade(req *http.Request, newStreamHandler api.NewStreamHandler) (api.Connection, error) {
+func (u spdy31RequestUpgrader) Upgrade(req *http.Request, newStreamHandler httpstream.NewStreamHandler) (httpstream.Connection, error) {
 	req.Header.Add(headerConnection, headerUpgrade)
 	req.Header.Add(headerUpgrade, headerSpdy31)
 
@@ -59,7 +59,7 @@ func (u spdy31RequestUpgrader) Upgrade(req *http.Request, newStreamHandler api.N
 	return &spdy31Connection{conn: spdyConn}, nil
 }
 
-func NewResponseUpgrader() api.ResponseUpgrader {
+func NewResponseUpgrader() httpstream.ResponseUpgrader {
 	return spdy31ResponseUpgrader{}
 }
 
@@ -79,7 +79,7 @@ func headerMatch(h http.Header, key, value string) bool {
 	return found
 }
 
-func (u spdy31ResponseUpgrader) Upgrade(w http.ResponseWriter, req *http.Request, newStreamHandler api.NewStreamHandler) (api.Connection, error) {
+func (u spdy31ResponseUpgrader) Upgrade(w http.ResponseWriter, req *http.Request, newStreamHandler httpstream.NewStreamHandler) (httpstream.Connection, error) {
 	if !headerMatch(req.Header, headerConnection, headerUpgrade) || !headerMatch(req.Header, headerUpgrade, headerSpdy31) {
 		return nil, fmt.Errorf("Missing upgrade headers: %v", req.Header)
 	}

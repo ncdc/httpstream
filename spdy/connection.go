@@ -5,7 +5,7 @@ import (
 
 	"github.com/docker/spdystream"
 	"github.com/golang/glog"
-	"github.com/ncdc/httpstream/api"
+	"github.com/ncdc/httpstream"
 )
 
 type spdy31Connection struct {
@@ -21,7 +21,7 @@ func (c *spdy31Connection) CloseWait() error {
 	return c.conn.CloseWait()
 }
 
-func (c *spdy31Connection) CreateStream(headers http.Header) (api.Stream, error) {
+func (c *spdy31Connection) CreateStream(headers http.Header) (httpstream.Stream, error) {
 	stream, err := c.conn.CreateStream(headers, nil, false)
 	if err != nil {
 		return nil, err

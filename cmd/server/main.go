@@ -8,20 +8,20 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/ncdc/httpstream"
-	"github.com/ncdc/httpstream/api"
+	"github.com/ncdc/httpstream/spdy"
 )
 
 type ExecHandler struct {
-	ControlStream api.Stream
-	InputStream   api.Stream
-	OutputStream  api.Stream
-	ErrorStream   api.Stream
+	ControlStream httpstream.Stream
+	InputStream   httpstream.Stream
+	OutputStream  httpstream.Stream
+	ErrorStream   httpstream.Stream
 
-	conn  api.Connection
+	conn  httpstream.Connection
 	ready chan struct{}
 }
 
-func (h *ExecHandler) newStreamHandler(stream api.Stream) {
+func (h *ExecHandler) newStreamHandler(stream httpstream.Stream) {
 	typeString := stream.GetHeader("type")
 	switch typeString {
 	case "control":
@@ -89,7 +89,7 @@ func (h *ExecHandler) Run() {
 }
 
 func upgradeMe(w http.ResponseWriter, req *http.Request) {
-	upgrader := httpstream.NewResponseUpgrader()
+	upgrader := spdy.NewResponseUpgrader()
 	h := &ExecHandler{
 		ready: make(chan struct{}, 1),
 	}

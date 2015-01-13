@@ -8,7 +8,7 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/ncdc/httpstream"
-	"github.com/ncdc/httpstream/api"
+	"github.com/ncdc/httpstream/spdy"
 )
 
 func main() {
@@ -18,8 +18,8 @@ func main() {
 	if err != nil {
 		glog.Fatal(err)
 	}
-	upgrader := httpstream.NewRequestUpgrader()
-	upgradedReq, err := upgrader.Upgrade(req, func(s api.Stream) {})
+	upgrader := spdy.NewRequestUpgrader()
+	upgradedReq, err := upgrader.Upgrade(req, func(s httpstream.Stream) {})
 	if err != nil {
 		glog.Fatal(err)
 	}
