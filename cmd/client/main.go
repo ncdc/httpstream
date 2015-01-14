@@ -5,71 +5,54 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/golang/glog"
-	"github.com/ncdc/httpstream"
 	"github.com/ncdc/httpstream/spdy"
 )
 
 func main() {
+	tty := flag.Bool("t", false, "tty")
+	in := flag.Bool("i", false, "in")
 	flag.Parse()
 
-	req, err := http.NewRequest("POST", "http://localhost:8888/", nil)
-	if err != nil {
-		glog.Fatal(err)
-	}
-	upgrader := spdy.NewRequestUpgrader()
-	upgradedReq, err := upgrader.Upgrade(req, func(s httpstream.Stream) {})
-	if err != nil {
-		glog.Fatal(err)
-	}
-
-	h := http.Header{}
-
-	h.Set("type", "control")
-	controlStream, err := upgradedReq.CreateStream(h)
+	args := strings.Join(flag.Args(), " ")
+	cmdReader := strings.NewReader(args)
+	req, err := http.NewRequest("POST", "http://localhost:8888/", cmdReader)
 	if err != nil {
 		glog.Fatal(err)
 	}
 
-	h.Set("type", "input")
-	inputStream, err := upgradedReq.CreateStream(h)
-	if err != nil {
-		glog.Fatal(err)
-	}
-
-	h.Set("type", "output")
-	outputStream, err := upgradedReq.CreateStream(h)
-	if err != nil {
-		glog.Fatal(err)
-	}
-
-	h.Set("type", "error")
-	errorStream, err := upgradedReq.CreateStream(h)
+	requestStreamer := spdy.NewRequestStreamer()
+	inputStream, outputStream, errorStream, err := requestStreamer.Stream3(req, *in, true, true, *tty)
 	if err != nil {
 		glog.Fatal(err)
 	}
 
 	cp := func(s string, dst io.Writer, src io.Reader) {
-		glog.Infof("Copying %s", s)
+		defer func() {
+			if s != "input" && *in {
+				inputStream.Close()
+			}
+		}()
 		io.Copy(dst, src)
-		glog.Infof("DONE Copying %s", s)
 	}
 
-	go cp("input", inputStream, os.Stdin)
+	// stdin
+	if *in {
+		go func() {
+			cp("input", inputStream, os.Stdin)
+			inputStream.Close()
+		}()
+	}
+
+	// stdout
 	go cp("output", os.Stdout, outputStream)
-	go cp("error", os.Stderr, errorStream)
 
-	b := make([]byte, 1)
-	_, err = controlStream.Read(b)
-	if err != nil && err != io.EOF {
-		glog.Fatal(err)
+	// stderr
+	if errorStream != nil {
+		go cp("error", os.Stderr, errorStream)
 	}
 
-	errorStream.Close()
-	outputStream.Close()
-	inputStream.Close()
-	controlStream.Close()
-	upgradedReq.CloseWait()
-	glog.Info("OVER")
+	requestStreamer.Wait()
 }

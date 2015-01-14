@@ -51,12 +51,15 @@ func (u spdy31RequestUpgrader) Upgrade(req *http.Request, newStreamHandler https
 	if err != nil {
 		return nil, err
 	}
+
+	c := &spdy31Connection{conn: spdyConn}
+
 	go spdyConn.Serve(func(s *spdystream.Stream) {
-		newStreamHandler(&spdy31Stream{stream: s})
+		newStreamHandler(&spdy31Stream{stream: s, conn: c})
 		s.SendReply(http.Header{}, false)
 	})
 
-	return &spdy31Connection{conn: spdyConn}, nil
+	return c, nil
 }
 
 func NewResponseUpgrader() httpstream.ResponseUpgrader {
@@ -104,10 +107,13 @@ func (u spdy31ResponseUpgrader) Upgrade(w http.ResponseWriter, req *http.Request
 		return nil, err
 	}
 
+	c := &spdy31Connection{conn: spdyConn}
+
 	go spdyConn.Serve(func(s *spdystream.Stream) {
-		newStreamHandler(&spdy31Stream{stream: s})
+		c.wg.Add(1)
+		newStreamHandler(&spdy31Stream{stream: s, conn: c})
 		s.SendReply(http.Header{}, false)
 	})
 
-	return &spdy31Connection{conn: spdyConn}, nil
+	return c, nil
 }

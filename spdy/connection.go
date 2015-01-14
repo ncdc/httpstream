@@ -2,22 +2,27 @@ package spdy
 
 import (
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/docker/spdystream"
-	"github.com/golang/glog"
 	"github.com/ncdc/httpstream"
 )
 
 type spdy31Connection struct {
 	conn *spdystream.Connection
+	wg   sync.WaitGroup
 }
 
 func (c *spdy31Connection) Close() error {
-	glog.Info("conn close")
 	return c.conn.Close()
 }
 
 func (c *spdy31Connection) CloseWait() error {
+	// wait until all the streams have been closed
+	c.wg.Wait()
+
+	// now close the connection
 	return c.conn.CloseWait()
 }
 
@@ -26,5 +31,9 @@ func (c *spdy31Connection) CreateStream(headers http.Header) (httpstream.Stream,
 	if err != nil {
 		return nil, err
 	}
-	return &spdy31Stream{stream: stream}, nil
+	if err = stream.WaitTimeout(5 * time.Second); err != nil {
+		return nil, err
+	}
+	c.wg.Add(1)
+	return &spdy31Stream{stream: stream, conn: c}, nil
 }

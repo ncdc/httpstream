@@ -1,110 +1,97 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os/exec"
+	"strings"
 
 	"github.com/golang/glog"
-	"github.com/ncdc/httpstream"
+	"github.com/kr/pty"
 	"github.com/ncdc/httpstream/spdy"
 )
 
-type ExecHandler struct {
-	ControlStream httpstream.Stream
-	InputStream   httpstream.Stream
-	OutputStream  httpstream.Stream
-	ErrorStream   httpstream.Stream
-
-	conn  httpstream.Connection
-	ready chan struct{}
-}
-
-func (h *ExecHandler) newStreamHandler(stream httpstream.Stream) {
-	typeString := stream.GetHeader("type")
-	switch typeString {
-	case "control":
-		h.ControlStream = stream
-	case "input":
-		h.InputStream = stream
-	case "output":
-		h.OutputStream = stream
-	case "error":
-		h.ErrorStream = stream
-	}
-
-	if h.ControlStream != nil && h.InputStream != nil && h.OutputStream != nil && h.ErrorStream != nil {
-		close(h.ready)
-	}
-}
-
-func (h *ExecHandler) Run() {
-	<-h.ready
-
-	command := exec.Command("bash")
-	cp := func(s string, dst io.Writer, src io.Reader) {
-		glog.Infof("Copying %s", s)
-		io.Copy(dst, src)
-		glog.Infof("DONE Copying %s", s)
-	}
-	if h.InputStream != nil {
-		cmdIn, err := command.StdinPipe()
-		if err != nil {
-			glog.Fatal(err)
-		}
-		go cp("input", cmdIn, h.InputStream)
-	}
-	if h.OutputStream != nil {
-		cmdOut, err := command.StdoutPipe()
-		if err != nil {
-			glog.Fatal(err)
-		}
-		go cp("output", h.OutputStream, cmdOut)
-	}
-	if h.ErrorStream != nil {
-		cmdErr, err := command.StderrPipe()
-		if err != nil {
-			glog.Fatal(err)
-		}
-		go cp("error", h.ErrorStream, cmdErr)
-	}
-	glog.Info("Running command")
-	err := command.Start()
-	if err != nil {
-		glog.Infof("Error starting command: %v", err)
-	}
-
-	glog.Infof("%d", command.Process.Pid)
-
-	err = command.Wait()
-	if err != nil {
-		glog.Infof("Error waiting command: %v", err)
-	}
-	h.ControlStream.Close()
-	h.InputStream.Close()
-	h.OutputStream.Close()
-	h.ErrorStream.Close()
-	glog.Info("DONE Run()")
-}
-
 func upgradeMe(w http.ResponseWriter, req *http.Request) {
-	upgrader := spdy.NewResponseUpgrader()
-	h := &ExecHandler{
-		ready: make(chan struct{}, 1),
-	}
-	var err error
-	h.conn, err = upgrader.Upgrade(w, req, h.newStreamHandler)
+	cmdBytes, err := ioutil.ReadAll(req.Body)
 	if err != nil {
-		glog.Error(err)
+		glog.Fatal(err)
 	}
-	h.Run()
-	h.conn.CloseWait()
+
+	streamer := spdy.NewResponseStreamer()
+	stdin, stdout, stderr, err := streamer.StreamResponse(w, req)
+	if err != nil {
+		glog.Fatalf("Unable to stream response %v", err)
+	}
+
+	cmdBuffer := bytes.NewBuffer(cmdBytes)
+	cmdString := cmdBuffer.String()
+	cmdParts := strings.Split(cmdString, " ")
+	command := exec.Command(cmdParts[0], cmdParts[1:]...)
+
+	cp := func(s string, dst io.WriteCloser, src io.Reader) {
+		defer func() {
+			if s != "input" {
+				dst.Close()
+			}
+		}()
+		io.Copy(dst, src)
+	}
+
+	if req.Header.Get("TTY") != "1" {
+		if stdin != nil {
+			cmdIn, err := command.StdinPipe()
+			if err != nil {
+				glog.Fatal(err)
+			}
+			go func() {
+				cp("input", cmdIn, stdin)
+				// make sure we close the command's stdin when the stream is done
+				cmdIn.Close()
+			}()
+		}
+
+		if stdout != nil {
+			cmdOut, err := command.StdoutPipe()
+			if err != nil {
+				glog.Fatal(err)
+			}
+			go cp("output", stdout, cmdOut)
+		}
+
+		if stderr != nil {
+			cmdErr, err := command.StderrPipe()
+			if err != nil {
+				glog.Fatal(err)
+			}
+			go cp("error", stderr, cmdErr)
+		}
+
+		command.Run()
+	} else {
+		p, err := pty.Start(command)
+		if err != nil {
+			glog.Fatal(err)
+		}
+		if stdin != nil {
+			go io.Copy(p, stdin)
+		}
+		if stdout != nil {
+			go io.Copy(stdout, p)
+		}
+		command.Wait()
+		// make sure to close the stdout stream!
+		stdout.Close()
+	}
+
+	streamer.Wait()
 }
 
 func main() {
 	flag.Parse()
 	glog.Info("Listening")
 	http.HandleFunc("/", upgradeMe)
-	http.ListenAndServe("0.0.0.0:8888", nil)
+	http.ListenAndServe("localhost:8888", nil)
 }
