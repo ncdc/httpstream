@@ -19,16 +19,19 @@ func upgradeMe(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		glog.Fatal(err)
 	}
+	cmdBuffer := bytes.NewBuffer(cmdBytes)
+	cmdString := cmdBuffer.String()
+	glog.Info(cmdString)
+	cmdParts := strings.Split(cmdString, " ")
 
 	streamer := spdy.NewResponseStreamer()
+	glog.Info("calling StreamResponse")
 	stdin, stdout, stderr, err := streamer.StreamResponse(w, req)
 	if err != nil {
 		glog.Fatalf("Unable to stream response %v", err)
 	}
 
-	cmdBuffer := bytes.NewBuffer(cmdBytes)
-	cmdString := cmdBuffer.String()
-	cmdParts := strings.Split(cmdString, " ")
+	glog.Info("creating command")
 	command := exec.Command(cmdParts[0], cmdParts[1:]...)
 
 	cp := func(s string, dst io.WriteCloser, src io.Reader) {

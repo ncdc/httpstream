@@ -3,6 +3,7 @@ package spdy
 import (
 	"io"
 	"net/http"
+	"sync"
 
 	"github.com/golang/glog"
 	"github.com/ncdc/httpstream"
@@ -18,6 +19,15 @@ func NewRequestStreamer() httpstream.RequestStreamer {
 
 func (s *spdy31RequestStreamer) Stream3(req *http.Request, doStdin, doStdout, doStderr, tty bool) (stdin io.WriteCloser, stdout, stderr io.Reader, err error) {
 	upgrader := NewRequestUpgrader()
+	if doStdin {
+		req.Header.Set("STDIN", "1")
+	}
+	if doStdout {
+		req.Header.Set("STDOUT", "1")
+	}
+	if doStderr {
+		req.Header.Set("STDERR", "1")
+	}
 	if tty {
 		req.Header.Set("TTY", "1")
 	}
@@ -79,33 +89,47 @@ type spdy31ResponseStreamer struct {
 	inputStream  httpstream.Stream
 	outputStream httpstream.Stream
 	errorStream  httpstream.Stream
-	ready        chan struct{}
+	ready        sync.WaitGroup
 	conn         httpstream.Connection
+	useStdin     bool
+	useStdout    bool
+	useStderr    bool
 	tty          bool
 }
 
 func NewResponseStreamer() httpstream.ResponseStreamer {
-	return &spdy31ResponseStreamer{
-		ready: make(chan struct{}, 1),
-	}
+	return &spdy31ResponseStreamer{}
 }
 
 func (s *spdy31ResponseStreamer) StreamResponse(w http.ResponseWriter, req *http.Request) (stdin io.Reader, stdout, stderr io.WriteCloser, err error) {
 	s.tty = req.Header.Get("TTY") == "1"
+	if req.Header.Get("STDIN") == "1" {
+		s.ready.Add(1)
+	}
+	if req.Header.Get("STDOUT") == "1" {
+		s.ready.Add(1)
+	}
+	if !s.tty && req.Header.Get("STDERR") == "1" {
+		s.ready.Add(1)
+	}
 	upgrader := NewResponseUpgrader()
 	conn, err := upgrader.Upgrade(w, req, s.newStreamHandler)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	<-s.ready
+	s.ready.Wait()
 	s.conn = conn
-	// close our half of the input stream, since we won't be writing to it
-	s.inputStream.Close()
+
+	if s.inputStream != nil {
+		// close our half of the input stream, since we won't be writing to it
+		s.inputStream.Close()
+	}
 	return s.inputStream, s.outputStream, s.errorStream, nil
 }
 
 func (s *spdy31ResponseStreamer) newStreamHandler(stream httpstream.Stream) {
 	typeString := stream.GetHeader("type")
+	glog.Infof(typeString)
 	switch typeString {
 	case "input":
 		s.inputStream = stream
@@ -114,7 +138,5 @@ func (s *spdy31ResponseStreamer) newStreamHandler(stream httpstream.Stream) {
 	case "error":
 		s.errorStream = stream
 	}
-	if s.inputStream != nil && s.outputStream != nil && (s.tty || s.errorStream != nil) {
-		close(s.ready)
-	}
+	s.ready.Done()
 }

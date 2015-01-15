@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/golang/glog"
 	"github.com/ncdc/httpstream/spdy"
@@ -29,10 +30,14 @@ func main() {
 		glog.Fatal(err)
 	}
 
+	var wg sync.WaitGroup
 	cp := func(s string, dst io.Writer, src io.Reader) {
 		defer func() {
-			if s != "input" && *in {
-				inputStream.Close()
+			if s != "input" {
+				if inputStream != nil {
+					inputStream.Close()
+				}
+				wg.Done()
 			}
 		}()
 		io.Copy(dst, src)
@@ -40,19 +45,26 @@ func main() {
 
 	// stdin
 	if *in {
+		wg.Add(1)
 		go func() {
 			cp("input", inputStream, os.Stdin)
 			inputStream.Close()
+			wg.Done()
 		}()
 	}
 
 	// stdout
+	wg.Add(1)
 	go cp("output", os.Stdout, outputStream)
 
 	// stderr
-	if errorStream != nil {
+	if !*tty && errorStream != nil {
+		wg.Add(1)
 		go cp("error", os.Stderr, errorStream)
 	}
 
+	glog.Infof("wg wait")
+	wg.Wait()
+	glog.Infof("rs wait")
 	requestStreamer.Wait()
 }
