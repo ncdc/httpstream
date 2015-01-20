@@ -40,7 +40,9 @@ func upgradeMe(w http.ResponseWriter, req *http.Request) {
 				dst.Close()
 			}
 		}()
+		glog.V(1).Infof("START COPY %s", s)
 		io.Copy(dst, src)
+		glog.V(1).Infof("DONE COPY %s", s)
 	}
 
 	if req.Header.Get("TTY") != "1" {

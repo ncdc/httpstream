@@ -8,11 +8,17 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/docker/docker/pkg/term"
 	"github.com/golang/glog"
 	"github.com/ncdc/httpstream/spdy"
+
+	_ "net/http/pprof"
 )
 
 func main() {
+	go func() {
+		http.ListenAndServe("localhost:7777", nil)
+	}()
 	tty := flag.Bool("t", false, "tty")
 	in := flag.Bool("i", false, "in")
 	flag.Parse()
@@ -30,24 +36,47 @@ func main() {
 		glog.Fatal(err)
 	}
 
+	var inFd uintptr
+	isTerminalIn := false
+	if *in {
+		inFd = os.Stdin.Fd()
+		isTerminalIn = term.IsTerminal(inFd)
+	}
+
+	r, w := io.Pipe()
+	go func() {
+		io.Copy(w, os.Stdin)
+		r.Close()
+	}()
 	var wg sync.WaitGroup
 	cp := func(s string, dst io.Writer, src io.Reader) {
 		defer func() {
 			if s != "input" {
 				if inputStream != nil {
 					inputStream.Close()
+					r.Close()
+					w.Close()
 				}
 				wg.Done()
 			}
 		}()
+		glog.Infof("START COPY %s", s)
 		io.Copy(dst, src)
+		glog.Infof("DONE COPY %s", s)
 	}
 
 	// stdin
 	if *in {
+		if isTerminalIn && *tty {
+			oldState, err := term.SetRawTerminal(inFd)
+			if err != nil {
+				glog.Fatal(err)
+			}
+			defer term.RestoreTerminal(inFd, oldState)
+		}
 		wg.Add(1)
 		go func() {
-			cp("input", inputStream, os.Stdin)
+			cp("input", inputStream, r)
 			inputStream.Close()
 			wg.Done()
 		}()
